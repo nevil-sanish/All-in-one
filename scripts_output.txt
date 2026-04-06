@@ -1,0 +1,48 @@
+﻿node : file:///D:/vs%20
+code/projects/all%20in%
+20one/scripts/fetch_kno
+wledge.js:2
+At line:1 char:1
++ node scripts/fetch_kn
+owledge.js 2>&1 | 
+Out-File -Encoding 
+utf8 script ...
++ ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~
+    + CategoryInfo     
+         : 
+NotSpecified: (f    
+ile:///D:/vs%2..._kno  
+  wledge.js:2:String) 
+[    ], RemoteException
+    + 
+FullyQualifiedError    
+Id : NativeCommandErr  
+  or
+ 
+import pdfParse from 
+'pdf-parse';
+       ^^^^^^^^
+SyntaxError: The 
+requested module 
+'pdf-parse' does not 
+provide an export 
+named 'default'
+    at 
+#asyncInstantiate (node
+:internal/modules/esm/m
+odule_job:302:21)
+    at async 
+ModuleJob.run (node:int
+ernal/modules/esm/modul
+e_job:405:5)
+    at async onImport.t
+racePromise.__proto__ (
+node:internal/modules/e
+sm/loader:660:26)
+    at async asyncRunEn
+tryPointWithESMLoader (
+node:internal/modules/r
+un_main:101:5)
+
+Node.js v24.13.0

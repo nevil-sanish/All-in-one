@@ -1,25 +1,24 @@
 import { useState, useRef, useEffect } from 'react';
 import { Bot, X, Send } from 'lucide-react';
-import { CHATBOT_QA, CHATBOT_SUGGESTIONS } from '../data/chatbotKnowledge';
+import { CHATBOT_SUGGESTIONS, CAMPUS_CONTEXT } from '../data/chatbotKnowledge';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-function findAnswer(input) {
-  const q = input.toLowerCase().trim();
-  let bestMatch = null;
-  let bestScore = 0;
-  for (const qa of CHATBOT_QA) {
-    for (const keyword of qa.q) {
-      const kw = keyword.toLowerCase();
-      if (q.includes(kw) || kw.includes(q)) {
-        const score = kw.length;
-        if (score > bestScore) { bestScore = score; bestMatch = qa.a; }
-      }
-    }
-  }
-  return bestMatch || "I'm not sure about that. Try asking about courses, facilities, clubs, placement, admission, or mess menu! Type 'help' to see what I can do. 🤔";
-}
+// Initialize Gemini
+const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({
+  model: 'gemini-2.5-flash',
+  systemInstruction: `You are the Campus Assistant for Indian Institute of Information Technology (IIIT) Kottayam.
+Use the following knowledge base strictly to answer questions.
+If a question is NOT related to IIIT Kottayam (for example, general knowledge, coding help, or unrelated facts), gracefully refuse to answer by saying:
+"I am a specialized campus assistant for IIIT Kottayam and I can only answer questions related to our campus, courses, and operations."
+Make your answers concise, helpful, and friendly.
+
+--- KNOWLEDGE BASE ---
+${CAMPUS_CONTEXT}`
+});
 
 export default function Chatbot() {
   const [open, setOpen] = useState(false);
@@ -27,10 +26,20 @@ export default function Chatbot() {
     { from: 'bot', text: "Hello! 👋 I'm your IIIT Kottayam Campus Assistant. Ask me anything about the campus!" }
   ]);
   const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
   const endRef = useRef(null);
   const { currentUser } = useAuth();
+  
+  // Create persistent chat session for Gemini
+  const chatSession = useRef(null);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => {
+    if (!chatSession.current) {
+      chatSession.current = model.startChat({ history: [] });
+    }
+  }, []);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, loading]);
 
   // Load chat history
   useEffect(() => {
@@ -39,7 +48,16 @@ export default function Chatbot() {
       try {
         const d = await getDoc(doc(db, 'chatHistory', currentUser.uid));
         if (d.exists() && d.data().messages?.length) {
-          setMessages(d.data().messages);
+          const loadedMsg = d.data().messages;
+          setMessages(loadedMsg);
+          // Sync history to Gemini
+          if (chatSession.current) {
+            const formattedHistory = loadedMsg.slice(1).map(m => ({
+              role: m.from === 'user' ? 'user' : 'model',
+              parts: [{ text: m.text }]
+            }));
+            chatSession.current = model.startChat({ history: formattedHistory });
+          }
         }
       } catch (e) { /* ignore */ }
     })();
@@ -54,14 +72,22 @@ export default function Chatbot() {
     return () => clearTimeout(timer);
   }, [messages, currentUser]);
 
-  const send = (text) => {
+  const send = async (text) => {
     const msg = text || input.trim();
-    if (!msg) return;
+    if (!msg || loading) return;
+    
     setMessages(p => [...p, { from: 'user', text: msg }]);
     setInput('');
-    setTimeout(() => {
-      setMessages(p => [...p, { from: 'bot', text: findAnswer(msg) }]);
-    }, 500 + Math.random() * 500);
+    setLoading(true);
+
+    try {
+      const result = await chatSession.current.sendMessage(msg);
+      setMessages(p => [...p, { from: 'bot', text: result.response.text() }]);
+    } catch (err) {
+      console.error('Gemini error:', err);
+      setMessages(p => [...p, { from: 'bot', text: 'I am taking a quick break. Please try again later! 💤' }]);
+    }
+    setLoading(false);
   };
 
   return (
@@ -103,6 +129,16 @@ export default function Chatbot() {
               </div>
             </div>
           ))}
+          {loading && (
+            <div style={{ display: 'flex', gap: 8, maxWidth: '85%', alignSelf: 'flex-start', animation: 'fadeInUp 0.3s ease' }}>
+              <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent-gradient)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12 }}>
+                <Bot size={14} color="white" />
+              </div>
+              <div style={{ padding: '10px 14px', borderRadius: 'var(--radius-lg)', fontSize: 14, background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>
+                <div className="spinner" style={{ width: 16, height: 16, borderTopColor: 'var(--accent)' }} />
+              </div>
+            </div>
+          )}
           <div ref={endRef} />
         </div>
 
@@ -110,7 +146,7 @@ export default function Chatbot() {
         {messages.length <= 2 && (
           <div style={{ display: 'flex', gap: 6, padding: '0 16px 10px', flexWrap: 'wrap' }}>
             {CHATBOT_SUGGESTIONS.map(s => (
-              <button key={s} onClick={() => send(s)} style={{ padding: '5px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer', transition: 'all 0.15s' }}
+              <button key={s} onClick={() => send(s)} disabled={loading} style={{ padding: '5px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer', transition: 'all 0.15s' }}
                 onMouseOver={e => { e.target.style.borderColor = 'var(--accent)'; e.target.style.color = 'var(--accent)'; }}
                 onMouseOut={e => { e.target.style.borderColor = 'var(--border)'; e.target.style.color = 'var(--text-secondary)'; }}>
                 {s}
@@ -121,9 +157,9 @@ export default function Chatbot() {
 
         {/* Input */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderTop: '1px solid var(--border)' }}>
-          <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()} placeholder="Ask about campus..."
+          <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()} placeholder="Ask about campus..." disabled={loading}
             style={{ flex: 1, background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', padding: '8px 16px', color: 'var(--text-primary)', fontSize: 14, outline: 'none' }} />
-          <button onClick={() => send()} style={{ width: 36, height: 36, border: 'none', borderRadius: '50%', background: 'var(--accent-gradient)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
+          <button onClick={() => send()} disabled={loading} style={{ width: 36, height: 36, border: 'none', borderRadius: '50%', background: loading ? 'var(--bg-elevated)' : 'var(--accent-gradient)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
             <Send size={16} />
           </button>
         </div>
